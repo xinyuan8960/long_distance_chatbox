@@ -35,6 +35,7 @@ npm start
 Frontend should now run at http://localhost:3000.
 
 ## 📂 Folder Structure
+```sh
 long_distance_chatbox/
 │── backend/                # Backend API with OpenAI & Socket.io
 │   ├── server.js           # Main server file
@@ -46,7 +47,7 @@ long_distance_chatbox/
 │   ├── package.json        # Frontend dependencies
 │── .gitignore              # Ignore unnecessary files
 │── README.md               # Main project documentation
-
+```
 
 ## 🚀 Deployment
 
