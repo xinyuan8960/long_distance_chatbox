@@ -1,80 +1,94 @@
-require("dotenv").config();
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const cors = require("cors");
-const OpenAI = require("openai");
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const OpenAI = require('openai');
 
-// Initialize Express App
+// Initialize services
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
-
-// Middleware
-app.use(cors()); // Enable Cross-Origin Requests
-app.use(express.json()); // Enable JSON Parsing
-
-// Initialize OpenAI API
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Socket.io: Handle Real-Time Chat
-io.on("connection", (socket) => {
-  console.log("New user connected");
+// Socket.io configuration
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:3000",
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ["websocket", "polling"]
+});
 
-  socket.on("joinRoom", (room) => {
-    socket.join(room);
-    console.log(`User joined room: ${room}`);
-  });
+// In-memory room storage
+const validRooms = new Map();
 
-  socket.on("message", async ({ room, text }) => {
-    try {
-      // Send message to OpenAI for rephrasing
-      const response = await openai.chat.completions.create({
-        model: "gpt-4",
-        messages: [
-          { role: "system", content: "Rephrase this text to be more polite and constructive." },
-          { role: "user", content: text },
-        ],
-      });
+io.on('connection', (socket) => {
+  console.log(`New connection: ${socket.id}`);
 
-      const rephrasedText = response.choices[0].message.content;
+  // Room authentication
+  socket.on('joinRoom', ({ room, password }, callback) => {
+    if (!room || !password) {
+      return callback({ success: false, message: 'Room and password required' });
+    }
 
-      // Broadcast rephrased message to all users in the room
-      io.to(room).emit("message", { text: rephrasedText });
-    } catch (error) {
-      console.error("OpenAI API Error:", error);
+    if (!validRooms.has(room)) {
+      validRooms.set(room, password);
+    }
+
+    if (validRooms.get(room) === password) {
+      socket.join(room);
+      callback({ success: true });
+      console.log(`User joined room: ${room}`);
+    } else {
+      callback({ success: false, message: 'Invalid password' });
+      socket.disconnect();
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected");
+  // Message handling
+  socket.on('message', async ({ room, text, toneLevel = 3 }) => {
+    try {
+      const prompt = buildPrompt(text, toneLevel);
+      const response = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2 + (toneLevel-1)*0.15
+      });
+
+      const rephrased = response.choices[0].message.content;
+      io.to(room).emit('message', { 
+        original: text,
+        rephrased,
+        timestamp: new Date().toISOString()
+      });
+      
+    } catch (error) {
+      console.error('Message processing failed:', error);
+      io.to(room).emit('message', { original: text, rephrased: text });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Disconnected: ${socket.id}`);
   });
 });
 
-// Rephrase Route for Testing
-app.post("/rephrase", async (req, res) => {
-  console.log("Received /rephrase request:", req.body);
+function buildPrompt(text, toneLevel) {
+  const tactics = [
+    "Use comforting language like 'I understand...'",
+    "Maintain neutrality with 'we' statements",
+    "Express needs clearly but respectfully"
+  ];
   
-  if (!req.body.text) {
-    return res.status(400).json({ error: "Missing 'text' field in request body" });
-  }
+  return `As a relationship expert, rephrase this message using:
+Strategy: ${tactics[toneLevel - 1 || 0]}
+Original: ${text}
+Rephrased:`;
+}
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: [
-        { role: "system", content: "Rephrase this text to be more polite and constructive." },
-        { role: "user", content: req.body.text },
-      ],
-    });
-
-    res.json({ rephrased: response.choices[0].message.content });
-  } catch (error) {
-    console.error("OpenAI API Error:", error);
-    res.status(500).json({ error: "Something went wrong with OpenAI" });
-  }
-});
-
-// Start Server
+// Server startup
 const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`Server running: http://localhost:${PORT}`);
+});
