@@ -5,90 +5,106 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const OpenAI = require('openai');
 
-// Initialize services
 const app = express();
 const server = http.createServer(app);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Socket.io configuration
+// Enhanced CORS configuration
+app.use(cors({
+  origin: 'http://localhost:3000',
+  methods: ['POST', 'GET'],
+  credentials: true
+}));
+
+app.use(express.json());
+
 const io = new Server(server, {
   cors: {
     origin: "http://localhost:3000",
-    methods: ["GET", "POST"],
-    credentials: true
-  },
-  transports: ["websocket", "polling"]
+    methods: ["GET", "POST"]
+  }
 });
 
-// In-memory room storage
-const validRooms = new Map();
+const activeRooms = new Map();
 
 io.on('connection', (socket) => {
-  console.log(`New connection: ${socket.id}`);
+  let currentRoom = null;
 
-  // Room authentication
   socket.on('joinRoom', ({ room, password }, callback) => {
-    if (!room || !password) {
-      return callback({ success: false, message: 'Room and password required' });
-    }
+    console.log(`Join room attempt: ${room}`);
+    if (!room || !password) return callback({ success: false, message: 'Credentials required' });
 
-    if (!validRooms.has(room)) {
-      validRooms.set(room, password);
-    }
-
-    if (validRooms.get(room) === password) {
-      socket.join(room);
-      callback({ success: true });
-      console.log(`User joined room: ${room}`);
+    if (activeRooms.has(room)) {
+      const existing = activeRooms.get(room);
+      if (existing.password !== password) return callback({ success: false, message: 'Invalid password' });
+      if (existing.users >= 2) return callback({ success: false, message: 'Room full' });
+      activeRooms.set(room, { ...existing, users: existing.users + 1 });
     } else {
-      callback({ success: false, message: 'Invalid password' });
-      socket.disconnect();
+      activeRooms.set(room, { password, users: 1 });
     }
+
+    currentRoom = room;
+    socket.join(room);
+    callback({ success: true });
   });
 
-  // Message handling
-  socket.on('message', async ({ room, text, toneLevel = 3 }) => {
-    try {
-      const prompt = buildPrompt(text, toneLevel);
-      const response = await openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2 + (toneLevel-1)*0.15
-      });
+  socket.on('message', ({ room, text }) => {
+    const trimmed = text?.trim();
+    if (!trimmed) return;
 
-      const rephrased = response.choices[0].message.content;
-      io.to(room).emit('message', { 
-        original: text,
-        rephrased,
-        timestamp: new Date().toISOString()
-      });
-      
-    } catch (error) {
-      console.error('Message processing failed:', error);
-      io.to(room).emit('message', { original: text, rephrased: text });
-    }
+    socket.broadcast.to(room).emit('message', {
+      text: trimmed,
+      sender: 'partner',
+      timestamp: Date.now()
+    });
+
+    socket.emit('message', {
+      text: trimmed,
+      sender: 'user',
+      timestamp: Date.now()
+    });
   });
 
   socket.on('disconnect', () => {
-    console.log(`Disconnected: ${socket.id}`);
+    if (currentRoom) {
+      const roomData = activeRooms.get(currentRoom);
+      if (roomData.users <= 1) {
+        activeRooms.delete(currentRoom);
+      } else {
+        activeRooms.set(currentRoom, { ...roomData, users: roomData.users - 1 });
+      }
+    }
   });
 });
 
-function buildPrompt(text, toneLevel) {
-  const tactics = [
-    "Use comforting language like 'I understand...'",
-    "Maintain neutrality with 'we' statements",
-    "Express needs clearly but respectfully"
-  ];
-  
-  return `As a relationship expert, rephrase this message using:
-Strategy: ${tactics[toneLevel - 1 || 0]}
-Original: ${text}
-Rephrased:`;
-}
+app.post('/preview', async (req, res) => {
+  try {
+    console.log('Received preview request:', req.body);
+    if (!req.body.text) {
+      return res.status(400).json({ error: 'No text provided' });
+    }
 
-// Server startup
-const PORT = process.env.PORT || 5001;
-server.listen(PORT, () => {
-  console.log(`Server running: http://localhost:${PORT}`);
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{
+        role: "user",
+        content: `Rephrase this message to be constructive: ${req.body.text}`
+      }]
+    });
+
+    const result = response.choices[0].message.content;
+    console.log('Preview generated:', result);
+    res.json({ preview: result });
+  } catch (error) {
+    console.error('Preview Error:', error);
+    res.status(500).json({ 
+      error: 'Preview service error',
+      details: error.message 
+    });
+  }
+});
+
+server.listen(5001, () => {
+  console.log('Server running on http://localhost:5001');
+  console.log('CORS configured for:', 'http://localhost:3000');
 });

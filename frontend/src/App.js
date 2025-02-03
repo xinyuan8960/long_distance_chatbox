@@ -1,131 +1,157 @@
 import React, { useState, useEffect } from 'react';
 import io from 'socket.io-client';
+import './App.css';
 
 const socket = io('http://localhost:5001', {
   autoConnect: false,
   transports: ['websocket']
 });
 
-const Chatroom = () => {
+export default function App() {
   const [room, setRoom] = useState('');
   const [password, setPassword] = useState('');
   const [authenticated, setAuthenticated] = useState(false);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState('');
-  const [toneLevel, setToneLevel] = useState(3);
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     socket.connect();
     
-    socket.on('connect', () => {
-      console.log('Connected to server');
-    });
-
     socket.on('message', (msg) => {
       setMessages(prev => [...prev, msg]);
     });
 
     return () => {
-      socket.off('connect');
+      socket.off('message');
       socket.disconnect();
     };
   }, []);
 
   const joinRoom = () => {
-    if (!room || !password) return alert('Please fill all fields');
-    
+    if (!room || !password) return alert('Missing fields');
     socket.emit('joinRoom', { room, password }, (response) => {
-      if (response.success) {
-        setAuthenticated(true);
-      } else {
-        alert(response.message || 'Join room failed');
-      }
+      response.success ? setAuthenticated(true) : alert(response.message);
     });
+  };
+
+  const handlePreview = async () => {
+    if (!message.trim()) return alert('Enter message first');
+    
+    try {
+      setLoading(true);
+      const response = await fetch('http://localhost:5001/preview', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ text: message }),
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Preview failed');
+      }
+
+      const data = await response.json();
+      setPreview(data.preview);
+    } catch (error) {
+      console.error('Preview Error:', error);
+      alert(`Preview Error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const sendMessage = () => {
-    if (!message.trim()) return;
+    const finalText = preview || message;
+    if (!finalText.trim()) return alert('Cannot send empty');
     
-    socket.emit('message', { 
-      room, 
-      text: message,
-      toneLevel 
-    });
-    
+    socket.emit('message', { room, text: finalText });
     setMessage('');
+    setPreview(null);
   };
 
   return (
-    <div style={styles.container}>
+    <div className="container">
       {!authenticated ? (
-        <div style={styles.authBox}>
-          <h2>Relationship Chatroom 💬</h2>
+        <div className="auth-box">
+          <h2>Relationship Chat</h2>
           <input
+            className="auth-input"
             placeholder="Room Name"
             value={room}
             onChange={(e) => setRoom(e.target.value)}
-            style={styles.input}
           />
           <input
             type="password"
+            className="auth-input"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={styles.input}
           />
-          <button onClick={joinRoom} style={styles.button}>
+          <button className="auth-button" onClick={joinRoom}>
             Join Room
           </button>
         </div>
       ) : (
-        <div style={styles.chatContainer}>
-          <div style={styles.header}>
+        <div className="chat-container">
+          <div className="chat-header">
             <h3>Room: {room}</h3>
-            <div style={styles.toneControl}>
-              <label>Tone Level: </label>
-              <input
-                type="range"
-                min="1"
-                max="5"
-                value={toneLevel}
-                onChange={(e) => setToneLevel(parseInt(e.target.value))}
-                style={{ width: '200px' }}
-              />
-              <span style={{ marginLeft: '10px' }}>
-                {['Gentle', 'Moderate', 'Assertive'][Math.floor((toneLevel-1)/2)]}
-              </span>
-            </div>
           </div>
 
-          <div style={styles.messageArea}>
+          <div className="message-area">
             {messages.map((msg, index) => (
-              <div key={index} style={styles.messageBubble}>
-                <div style={styles.originalText}>Original: {msg.original}</div>
-                <div style={styles.rephrasedText}>Suggested: {msg.rephrased}</div>
+              <div
+                key={index}
+                className={`message-bubble ${msg.sender}-message`}
+              >
+                {msg.text}
               </div>
             ))}
+
+            {preview && (
+              <div className="message-bubble preview-message">
+                {preview}
+                <div className="preview-actions">
+                  <button onClick={sendMessage}>Confirm</button>
+                  <button onClick={() => setPreview(null)}>Edit</button>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div style={styles.inputArea}>
-            <input
-              type="text"
+          <div className="input-container">
+            <textarea
+              className="message-input"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
               placeholder="Type your message..."
-              style={styles.messageInput}
+              rows={2}
+              disabled={loading}
             />
-            <button onClick={sendMessage} style={styles.sendButton}>
-              Send
-            </button>
+            <div className="button-group">
+              <button 
+                className="preview-button" 
+                onClick={handlePreview}
+                disabled={loading || !message.trim()}
+              >
+                {loading ? 'Generating...' : 'Preview'}
+              </button>
+              <button 
+                className="send-button" 
+                onClick={sendMessage}
+                disabled={!message.trim() && !preview}
+              >
+                Send
+              </button>
+            </div>
           </div>
         </div>
       )}
     </div>
   );
-};
-
-// Style definitions remain the same (no Chinese characters)
-const styles = { /* ... */ };
-
-export default Chatroom;
+}
