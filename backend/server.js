@@ -8,6 +8,8 @@ const OpenAI = require('openai');
 const app = express();
 const server = http.createServer(app);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const { STRATEGIES, TONE_LEVELS, PROMPT_TEMPLATE } = require('./config/prompt.config');
+
 
 // Enhanced CORS configuration
 app.use(cors({
@@ -27,11 +29,29 @@ const io = new Server(server, {
 
 const activeRooms = new Map();
 
+// ========================
+// PRACTICE AREA 1: PROMPT TEMPLATES (moved to prompts.config)
+// ========================
+const getPrompt = (strategyKey, text, toneLevel) => {
+  const strategy = STRATEGIES[strategyKey] || STRATEGIES.therapist;
+  
+  return PROMPT_TEMPLATE
+    .replace('{base}', strategy.base)
+    .replace('{principles}', strategy.principles)
+    .replace('{processing}', strategy.processing)
+    .replace('{examples}', strategy.examples)
+    .replace('{ethics}', strategy.ethics)
+    .replace('{format}', strategy.format)
+    .replace('{text}', text)
+    .replace('{tone}', TONE_LEVELS[toneLevel - 1]);
+};
+
+// ========================
+
 io.on('connection', (socket) => {
   let currentRoom = null;
 
   socket.on('joinRoom', ({ room, password }, callback) => {
-    console.log(`Join room attempt: ${room}`);
     if (!room || !password) return callback({ success: false, message: 'Credentials required' });
 
     if (activeRooms.has(room)) {
@@ -79,21 +99,30 @@ io.on('connection', (socket) => {
 
 app.post('/preview', async (req, res) => {
   try {
-    console.log('Received preview request:', req.body);
-    if (!req.body.text) {
-      return res.status(400).json({ error: 'No text provided' });
-    }
+    const { text, toneLevel = 3 } = req.body;
+    if (!text) return res.status(400).json({ error: 'No text provided' });
+
+    // ========================
+    // PRACTICE AREA 2: PROMPT EXPERIMENTATION
+    // ========================
+    const STRATEGY = process.env.PROMPT_STRATEGY || 'basic'; // Change via .env
+    const prompt = getPrompt(STRATEGY, text, toneLevel);
+    
+    console.log('Using prompt strategy:', STRATEGY);
+    console.log('Generated prompt:', prompt);
 
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{
         role: "user",
-        content: `Rephrase this message to be constructive: ${req.body.text}`
-      }]
+        content: prompt
+      }],
+      temperature: 0.2 + (toneLevel * 0.1) // Dynamic temperature
     });
 
     const result = response.choices[0].message.content;
-    console.log('Preview generated:', result);
+    // ========================
+
     res.json({ preview: result });
   } catch (error) {
     console.error('Preview Error:', error);
@@ -106,5 +135,5 @@ app.post('/preview', async (req, res) => {
 
 server.listen(5001, () => {
   console.log('Server running on http://localhost:5001');
-  console.log('CORS configured for:', 'http://localhost:3000');
+  console.log('Available prompt strategies:', Object.keys(STRATEGIES));
 });
