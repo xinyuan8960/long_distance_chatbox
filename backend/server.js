@@ -177,3 +177,69 @@ app.post('/evaluate', async (req, res) => {
     return res.status(500).json({ error: 'Evaluation failed', details: err.message });
   }
 });
+
+// ========================
+// Iterative Improvement Endpoint
+// ========================
+app.post('/iterate', async (req, res) => {
+  try {
+    const { inputText, outputText, toneLevel = 3, strategy = process.env.PROMPT_STRATEGY || 'basic' } = req.body;
+
+    if (!inputText || !outputText) {
+      return res.status(400).json({ error: 'inputText and outputText are required' });
+    }
+
+    // 1) Evaluate current output to get feedback
+    const metricsBefore = await evaluateRephrase(openai, { inputText, outputText, toneLevel, strategy });
+
+    // 2) Build an improvement prompt by appending the feedback
+    const STRATEGY = strategy; // keep naming consistent with getPrompt
+    const basePrompt = getPrompt(STRATEGY, inputText, toneLevel);
+    const improvementInstructions = `\n\nYou previously produced a rewrite that scored lower than desired.\nApply this feedback STRICTLY and produce an improved, final rewrite: "${metricsBefore.feedback}"\nRules:\n- Keep the user's intent and content\n- Match the requested tone level\n- Reply ONLY with the improved rewritten message (no labels, no explanation)\n- Use the same language as the input`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "user", content: basePrompt + improvementInstructions }
+      ],
+      temperature: 0.2 + (toneLevel * 0.1)
+    });
+
+    const improved = response.choices?.[0]?.message?.content || '';
+
+    // 3) Re-evaluate the improved output
+    const metricsAfter = await evaluateRephrase(openai, { inputText, outputText: improved, toneLevel, strategy });
+
+    // 4) Monotonic guard: only accept if overall increases
+    const applied = (metricsAfter?.overall ?? 0) > (metricsBefore?.overall ?? 0);
+    const chosenOutput = applied ? improved : outputText;
+    const chosenMetrics = applied ? metricsAfter : metricsBefore;
+
+    // Logging
+    try {
+      const logDir = path.join(__dirname, '');
+      const logPath = path.join(logDir, 'eval_logs.jsonl');
+      const record = {
+        ts: new Date().toISOString(),
+        iteration: true,
+        inputText,
+        previousOutput: outputText,
+        improvedOutput: improved,
+        applied,
+        chosenOutput,
+        toneLevel,
+        strategy,
+        before: metricsBefore,
+        after: metricsAfter
+      };
+      fs.appendFileSync(logPath, JSON.stringify(record) + "\n");
+    } catch (logErr) {
+      console.error('Iterate logging failed:', logErr);
+    }
+
+    return res.json({ success: true, applied, improved: chosenOutput, metrics: chosenMetrics });
+  } catch (err) {
+    console.error('Iterate Error:', err);
+    return res.status(500).json({ error: 'Iteration failed', details: err.message });
+  }
+});

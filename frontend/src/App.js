@@ -17,6 +17,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [evalLoading, setEvalLoading] = useState(false);
   const [metrics, setMetrics] = useState(null);
+  const [iterLoading, setIterLoading] = useState(false);
 
   useEffect(() => {
     socket.connect();
@@ -113,6 +114,48 @@ export default function App() {
     socket.emit('message', { room, text: finalText });
     setMessage('');
     setPreview(null);
+    setMetrics(null);
+  };
+
+  const handleImprove = async () => {
+    if (!message.trim()) return alert('Enter message first');
+    const current = preview || message;
+    if (!current.trim()) return alert('Nothing to improve');
+
+    try {
+      setIterLoading(true);
+      const response = await fetch('http://localhost:5001/iterate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          inputText: message,
+          outputText: current,
+          toneLevel: 3,
+          strategy: 'therapist'
+        }),
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Iteration failed');
+      }
+
+      const data = await response.json();
+      // Only update preview if applied per backend monotonic guard
+      if (data.applied) {
+        setPreview(data.improved || '');
+      }
+      setMetrics(data.metrics || null);
+    } catch (error) {
+      console.error('Iterate Error:', error);
+      alert(`Iterate Error: ${error.message}`);
+    } finally {
+      setIterLoading(false);
+    }
   };
 
   return (
@@ -198,6 +241,13 @@ export default function App() {
                 disabled={evalLoading || !message.trim()}
               >
                 {evalLoading ? 'Evaluating...' : 'Evaluate'}
+              </button>
+              <button 
+                className="improve-button" 
+                onClick={handleImprove}
+                disabled={iterLoading || (!preview && !message.trim())}
+              >
+                {iterLoading ? 'Improving...' : 'Improve'}
               </button>
               <button 
                 className="send-button" 

@@ -150,6 +150,12 @@ body {
   padding: 10px 20px;
 }
 
+.improve-button {
+  background: #17a2b8;
+  color: white;
+  padding: 10px 20px;
+}
+
 .eval-card {
   background: #fff;
   border: 1px solid #eee;
