@@ -15,6 +15,8 @@ export default function App() {
   const [message, setMessage] = useState('');
   const [preview, setPreview] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [metrics, setMetrics] = useState(null);
 
   useEffect(() => {
     socket.connect();
@@ -41,6 +43,7 @@ export default function App() {
     
     try {
       setLoading(true);
+      setMetrics(null);
       const response = await fetch('http://localhost:5001/preview', {
         method: 'POST',
         headers: { 
@@ -63,6 +66,43 @@ export default function App() {
       alert(`Preview Error: ${error.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleEvaluate = async () => {
+    if (!message.trim()) return alert('Enter message first');
+    const outputText = preview || message;
+    if (!outputText.trim()) return alert('Nothing to evaluate');
+
+    try {
+      setEvalLoading(true);
+      const response = await fetch('http://localhost:5001/evaluate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          inputText: message,
+          outputText,
+          toneLevel: 3,
+          strategy: 'therapist'
+        }),
+        credentials: 'include'
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Evaluation failed');
+      }
+
+      const data = await response.json();
+      setMetrics(data.metrics || null);
+    } catch (error) {
+      console.error('Evaluate Error:', error);
+      alert(`Evaluate Error: ${error.message}`);
+    } finally {
+      setEvalLoading(false);
     }
   };
 
@@ -122,6 +162,17 @@ export default function App() {
                 </div>
               </div>
             )}
+
+            {metrics && (
+              <div className="eval-card">
+                <div className="eval-row"><span>Content</span><strong>{Math.round(metrics.content_preservation * 100)}%</strong></div>
+                <div className="eval-row"><span>Tone</span><strong>{Math.round(metrics.tone_alignment * 100)}%</strong></div>
+                <div className="eval-row"><span>Language</span><strong>{Math.round(metrics.language_match * 100)}%</strong></div>
+                <div className="eval-row"><span>Safety</span><strong>{Math.round(metrics.safety * 100)}%</strong></div>
+                <div className="eval-row overall"><span>Overall</span><strong>{metrics.overall}</strong></div>
+                {metrics.feedback && <div className="eval-feedback">{metrics.feedback}</div>}
+              </div>
+            )}
           </div>
 
           <div className="input-container">
@@ -140,6 +191,13 @@ export default function App() {
                 disabled={loading || !message.trim()}
               >
                 {loading ? 'Generating...' : 'Preview'}
+              </button>
+              <button 
+                className="evaluate-button" 
+                onClick={handleEvaluate}
+                disabled={evalLoading || !message.trim()}
+              >
+                {evalLoading ? 'Evaluating...' : 'Evaluate'}
               </button>
               <button 
                 className="send-button" 

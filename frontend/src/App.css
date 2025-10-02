@@ -144,6 +144,41 @@ body {
   padding: 10px 25px;
 }
 
+.evaluate-button {
+  background: #6f42c1;
+  color: white;
+  padding: 10px 20px;
+}
+
+.eval-card {
+  background: #fff;
+  border: 1px solid #eee;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 10px;
+  max-width: 70%;
+}
+
+.eval-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  font-size: 0.95em;
+}
+
+.eval-row.overall {
+  border-top: 1px dashed #ddd;
+  margin-top: 6px;
+  padding-top: 8px;
+  font-weight: 600;
+}
+
+.eval-feedback {
+  margin-top: 8px;
+  font-size: 0.9em;
+  color: #444;
+}
+
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;

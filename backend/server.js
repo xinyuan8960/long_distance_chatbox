@@ -8,6 +8,9 @@ const OpenAI = require('openai');
 const app = express();
 const server = http.createServer(app);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const fs = require('fs');
+const path = require('path');
+const { evaluateRephrase } = require('./eval/judge');
 const { STRATEGIES, TONE_LEVELS, PROMPT_TEMPLATE } = require('./config/prompt.config');
 
 
@@ -136,4 +139,41 @@ app.post('/preview', async (req, res) => {
 server.listen(5001, () => {
   console.log('Server running on http://localhost:5001');
   console.log('Available prompt strategies:', Object.keys(STRATEGIES));
+});
+
+// ========================
+// Evaluation Endpoint
+// ========================
+app.post('/evaluate', async (req, res) => {
+  try {
+    const { inputText, outputText, toneLevel = 3, strategy = process.env.PROMPT_STRATEGY || 'basic' } = req.body;
+
+    if (!inputText || !outputText) {
+      return res.status(400).json({ error: 'inputText and outputText are required' });
+    }
+
+    const metrics = await evaluateRephrase(openai, { inputText, outputText, toneLevel, strategy });
+
+    // Logging
+    try {
+      const logDir = path.join(__dirname, '');
+      const logPath = path.join(logDir, 'eval_logs.jsonl');
+      const record = {
+        ts: new Date().toISOString(),
+        inputText,
+        outputText,
+        toneLevel,
+        strategy,
+        ...metrics
+      };
+      fs.appendFileSync(logPath, JSON.stringify(record) + "\n");
+    } catch (logErr) {
+      console.error('Eval logging failed:', logErr);
+    }
+
+    return res.json({ success: true, metrics });
+  } catch (err) {
+    console.error('Evaluate Error:', err);
+    return res.status(500).json({ error: 'Evaluation failed', details: err.message });
+  }
 });
